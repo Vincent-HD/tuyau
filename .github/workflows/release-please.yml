@@ -13,6 +13,29 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: googleapis/release-please-action@v4
+        id: release
         with:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+
+      # release-please bumps Cargo.toml only; the flake builds with the lock
+      # file, so the workspace crates' versions there must follow.
+      - if: ${{ steps.release.outputs.pr }}
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ fromJSON(steps.release.outputs.pr).headBranchName }}
+      - if: ${{ steps.release.outputs.pr }}
+        name: Sync Cargo.lock
+        run: |
+          version=$(jq -r '."."' .release-please-manifest.json)
+          awk -v version="$version" '
+            /^name = "tuyau(-core|-gui|-pipewire)?"$/ { print; getline; print "version = \"" version "\""; next }
+            { print }
+          ' Cargo.lock > Cargo.lock.new
+          mv Cargo.lock.new Cargo.lock
+          if ! git diff --quiet; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git commit -am "chore: sync Cargo.lock with the release version"
+            git push
+          fi
