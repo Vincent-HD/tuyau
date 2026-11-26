@@ -1,0 +1,382 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>tuyau — the PipeWire patchbay you can keep in a file</title>
+  <meta name="description" content="tuyau is a declarative PipeWire patchbay: a GPU-rendered graph editor and a CLI sharing one config file. Auto-reconnect, tidy layout, volume, virtual devices, undo.">
+  <meta property="og:title" content="tuyau — declarative PipeWire patchbay">
+  <meta property="og:description" content="A GPU-rendered graph editor and a CLI sharing one config file you can keep in Nix.">
+  <meta property="og:image" content="assets/screenshots/editor.webp">
+  <meta name="theme-color" content="#13151a">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="glow" aria-hidden="true"></div>
+
+  <header class="nav" id="nav">
+    <a class="brand" href="#top" aria-label="tuyau, back to top">
+      <img src="favicon.svg" width="28" height="28" alt="">
+      <span>tuyau</span>
+    </a>
+    <nav aria-label="Sections">
+      <a href="#features">Features</a>
+      <a href="#declare">Config</a>
+      <a href="#compare">vs Crosspipe</a>
+      <a href="#install">Install</a>
+    </nav>
+    <a class="button small" href="https://github.com/Vincent-HD/tuyau">GitHub</a>
+  </header>
+
+  <main id="top">
+    <section class="hero">
+      <p class="eyebrow reveal">PipeWire patchbay · Rust · GPU-rendered</p>
+      <h1 class="reveal">The audio graph you can<br><span class="gradient">keep in a file.</span></h1>
+      <p class="lede reveal">
+        tuyau is a graph editor and a CLI for PipeWire that share one config.
+        Wire things by hand, and they stay wired: across app restarts, reboots and
+        <code>nixos-rebuild</code>.
+      </p>
+      <div class="actions reveal">
+        <a class="button primary" href="#install">Get started</a>
+        <button class="command" type="button" data-copy="nix run github:Vincent-HD/tuyau">
+          <span class="prompt">$</span>
+          <span>nix run github:Vincent-HD/tuyau</span>
+          <span class="copy-label" aria-live="polite">copy</span>
+        </button>
+      </div>
+
+      <!-- An animated patchbay: wires draw themselves, then carry signal. -->
+      <div class="stage reveal" aria-hidden="true">
+        <svg viewBox="0 0 960 500" class="patchbay">
+          <defs>
+            <pattern id="grid" width="24" height="24" patternUnits="userSpaceOnUse">
+              <circle cx="1" cy="1" r="1" fill="#fff" fill-opacity=".05"/>
+            </pattern>
+          </defs>
+          <rect width="960" height="500" fill="url(#grid)"/>
+
+          <g class="wires">
+            <path id="w1" class="wire pink"      style="--d:.9s"  pathLength="1" d="M230 86C305 86 305 156 380 156"/>
+            <path id="w2" class="wire pink dark" style="--d:1s"   pathLength="1" d="M230 110C305 110 305 180 380 180"/>
+            <path id="w3" class="wire amber"      style="--d:2.9s" pathLength="1" d="M230 236C305 236 305 156 380 156"/>
+            <path id="w4" class="wire amber dark" style="--d:3s"   pathLength="1" d="M230 260C305 260 305 180 380 180"/>
+            <path id="w5" class="wire green"      style="--d:1.4s" pathLength="1" d="M580 156L730 156"/>
+            <path id="w6" class="wire green dark" style="--d:1.5s" pathLength="1" d="M580 180L730 180"/>
+            <path id="w7" class="wire green"      style="--d:1.9s" pathLength="1" d="M230 416C480 416 480 396 730 396"/>
+            <path id="w8" class="wire green dark" style="--d:2s"   pathLength="1" d="M230 416C480 416 480 420 730 420"/>
+          </g>
+
+          <g class="signals">
+            <circle r="3.5" class="signal pink"><animateMotion dur="1.6s" begin="1.8s" repeatCount="indefinite"><mpath href="#w1"/></animateMotion></circle>
+            <circle r="3.5" class="signal pink"><animateMotion dur="1.6s" begin="2.5s" repeatCount="indefinite"><mpath href="#w2"/></animateMotion></circle>
+            <circle r="3.5" class="signal amber"><animateMotion dur="1.6s" begin="3.9s" repeatCount="indefinite"><mpath href="#w3"/></animateMotion></circle>
+            <circle r="3.5" class="signal amber"><animateMotion dur="1.6s" begin="4.5s" repeatCount="indefinite"><mpath href="#w4"/></animateMotion></circle>
+            <circle r="3.5" class="signal green"><animateMotion dur="1.2s" begin="2.2s" repeatCount="indefinite"><mpath href="#w5"/></animateMotion></circle>
+            <circle r="3.5" class="signal green"><animateMotion dur="1.2s" begin="2.8s" repeatCount="indefinite"><mpath href="#w6"/></animateMotion></circle>
+            <circle r="3.5" class="signal green"><animateMotion dur="2.6s" begin="2.9s" repeatCount="indefinite"><mpath href="#w7"/></animateMotion></circle>
+            <circle r="3.5" class="signal green"><animateMotion dur="2.6s" begin="4.1s" repeatCount="indefinite"><mpath href="#w8"/></animateMotion></circle>
+          </g>
+
+          <g class="card" style="--d:.1s" transform="translate(30 40)">
+            <rect class="card-bg" width="200" height="88" rx="8"/>
+            <path class="card-head" d="M0 8a8 8 0 0 1 8-8h184a8 8 0 0 1 8 8v22H0z"/>
+            <rect class="bar pink-fill" x="10" y="9" width="3" height="12" rx="1.5"/>
+            <text class="title" x="21" y="20">Spotify</text>
+            <text class="port" x="186" y="50" text-anchor="end">FL</text>
+            <text class="port" x="186" y="74" text-anchor="end">FR</text>
+            <circle class="dot pink-fill" cx="200" cy="46" r="5"/>
+            <circle class="dot pink-dark-fill" cx="200" cy="70" r="5"/>
+          </g>
+
+          <g class="card late" style="--d:2.4s" transform="translate(30 190)">
+            <rect class="card-bg" width="200" height="88" rx="8"/>
+            <path class="card-head" d="M0 8a8 8 0 0 1 8-8h184a8 8 0 0 1 8 8v22H0z"/>
+            <rect class="bar amber-fill" x="10" y="9" width="3" height="12" rx="1.5"/>
+            <text class="title" x="21" y="20">Firefox</text>
+            <text class="hint" x="186" y="20" text-anchor="end">just started</text>
+            <text class="port" x="186" y="50" text-anchor="end">FL</text>
+            <text class="port" x="186" y="74" text-anchor="end">FR</text>
+            <circle class="dot amber-fill" cx="200" cy="46" r="5"/>
+            <circle class="dot amber-dark-fill" cx="200" cy="70" r="5"/>
+          </g>
+
+          <g class="card" style="--d:.2s" transform="translate(30 370)">
+            <rect class="card-bg" width="200" height="64" rx="8"/>
+            <path class="card-head" d="M0 8a8 8 0 0 1 8-8h184a8 8 0 0 1 8 8v22H0z"/>
+            <rect class="bar green-fill" x="10" y="9" width="3" height="12" rx="1.5"/>
+            <text class="title" x="21" y="20">Microphone</text>
+            <text class="port" x="186" y="50" text-anchor="end">MONO</text>
+            <circle class="dot green-fill" cx="200" cy="46" r="5"/>
+          </g>
+
+          <g class="card" style="--d:.35s" transform="translate(380 110)">
+            <rect class="card-bg" width="200" height="88" rx="8"/>
+            <path class="card-head" d="M0 8a8 8 0 0 1 8-8h184a8 8 0 0 1 8 8v22H0z"/>
+            <rect class="bar green-fill" x="10" y="9" width="3" height="12" rx="1.5"/>
+            <text class="title" x="21" y="20">Equalizer</text>
+            <text class="port" x="14" y="50">FL</text>
+            <text class="port" x="14" y="74">FR</text>
+            <text class="port" x="186" y="50" text-anchor="end">FL</text>
+            <text class="port" x="186" y="74" text-anchor="end">FR</text>
+            <circle class="dot green-fill" cx="0" cy="46" r="5"/>
+            <circle class="dot green-fill" cx="0" cy="70" r="5"/>
+            <circle class="dot green-fill" cx="200" cy="46" r="5"/>
+            <circle class="dot green-dark-fill" cx="200" cy="70" r="5"/>
+          </g>
+
+          <g class="card" style="--d:.5s" transform="translate(730 110)">
+            <rect class="card-bg" width="200" height="110" rx="8"/>
+            <path class="card-head" d="M0 8a8 8 0 0 1 8-8h184a8 8 0 0 1 8 8v22H0z"/>
+            <rect class="bar green-fill" x="10" y="9" width="3" height="12" rx="1.5"/>
+            <text class="title" x="21" y="20">Headphones</text>
+            <text class="port" x="14" y="50">FL</text>
+            <text class="port" x="14" y="74">FR</text>
+            <circle class="dot green-fill" cx="0" cy="46" r="5"/>
+            <circle class="dot green-fill" cx="0" cy="70" r="5"/>
+            <rect class="track" x="38" y="90" width="118" height="5" rx="2.5"/>
+            <rect class="level" x="38" y="90" width="118" height="5" rx="2.5"/>
+            <rect class="mute" x="12" y="84" width="18" height="16" rx="3"/>
+            <text class="mute-label" x="21" y="96" text-anchor="middle">M</text>
+          </g>
+
+          <g class="card" style="--d:.6s" transform="translate(730 350)">
+            <rect class="card-bg" width="200" height="88" rx="8"/>
+            <path class="card-head" d="M0 8a8 8 0 0 1 8-8h184a8 8 0 0 1 8 8v22H0z"/>
+            <rect class="bar green-fill" x="10" y="9" width="3" height="12" rx="1.5"/>
+            <text class="title" x="21" y="20">Voice chat</text>
+            <text class="port" x="14" y="50">FL</text>
+            <text class="port" x="14" y="74">FR</text>
+            <circle class="dot green-fill" cx="0" cy="46" r="5"/>
+            <circle class="dot green-fill" cx="0" cy="70" r="5"/>
+          </g>
+        </svg>
+        <p class="stage-caption">A new stream appears, and its saved links come back on their own.</p>
+      </div>
+    </section>
+
+    <section class="shot-section">
+      <figure class="window reveal" id="tilt">
+        <div class="window-bar"><i></i><i></i><i></i><span>tuyau</span></div>
+        <img src="assets/screenshots/editor.webp" width="1800" height="770" alt="The tuyau graph editor showing a microphone chain and several apps wired into sinks, each source with its own wire color.">
+      </figure>
+    </section>
+
+    <section id="features" class="section">
+      <p class="eyebrow reveal">Features</p>
+      <h2 class="reveal">Everything the graph needs, nothing it has to forget.</h2>
+      <div class="grid">
+        <article class="feature reveal">
+          <svg viewBox="0 0 24 24"><path d="M6 3h9l4 4v14H6z"/><path d="M14 3v5h5M9 13h7M9 17h5"/></svg>
+          <h3>Declarative config</h3>
+          <p>Links, renames, volumes and virtual devices live in a read-only TOML file. The GUI never writes to it, so it fits in Nix as is.</p>
+        </article>
+        <article class="feature reveal">
+          <svg viewBox="0 0 24 24"><path d="M4 12a8 8 0 0 1 14-5l2-2v6h-6l2-2a5 5 0 0 0-9 3M20 12a8 8 0 0 1-14 5l-2 2v-6h6l-2 2a5 5 0 0 0 9-3"/></svg>
+          <h3>Auto-reconnect</h3>
+          <p>Declared links are recreated whenever their nodes appear, from the GUI or from <code>tuyau watch</code> running as a user service.</p>
+        </article>
+        <article class="feature reveal">
+          <svg viewBox="0 0 24 24"><rect x="3" y="4" width="6" height="5" rx="1"/><rect x="3" y="15" width="6" height="5" rx="1"/><rect x="15" y="9.5" width="6" height="5" rx="1"/><path d="M9 6.5c3 0 3 5.5 6 5.5M9 17.500c3 0 3-5.500 6-5.500"/></svg>
+          <h3>A layout that untangles</h3>
+          <p>Nodes follow the signal flow, wire crossings are minimized and linked ports line up. Auto-arrange keeps it tidy as streams come and go.</p>
+        </article>
+        <article class="feature reveal">
+          <svg viewBox="0 0 24 24"><path d="M4 9v6h4l5 4V5L8 9zM16 9a4 4 0 0 1 0 6M18.500 6.500a8 8 0 0 1 0 11"/></svg>
+          <h3>Volume and mute</h3>
+          <p>A slider and a mute button on every card, the same from the CLI, and initial levels from the config when a node appears.</p>
+        </article>
+        <article class="feature reveal">
+          <svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="3" stroke-dasharray="3 3"/><path d="M12 8v8M8 12h8"/></svg>
+          <h3>Virtual devices</h3>
+          <p>Create sinks and sources to group streams, give them their own volume, and route them to <code>@default-sink@</code> so they follow your output.</p>
+        </article>
+        <article class="feature reveal">
+          <svg viewBox="0 0 24 24"><path d="M8 7 4 11l4 4"/><path d="M4 11h10a6 6 0 0 1 0 12h-3" transform="translate(0 -4)"/></svg>
+          <h3>Undo everything</h3>
+          <p>Links, volumes, moves, renames, hides, devices, even a full re-arrange: <kbd>Ctrl</kbd>+<kbd>Z</kbd> takes it back.</p>
+        </article>
+        <article class="feature reveal">
+          <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3M12 15h5"/></svg>
+          <h3>A real CLI</h3>
+          <p><code>tuyau ls</code>, <code>link</code>, <code>volume</code>, <code>mute</code>, <code>apply</code>, <code>watch</code>. Script it, or let the service keep the config applied.</p>
+        </article>
+        <article class="feature reveal">
+          <svg viewBox="0 0 24 24"><circle cx="5" cy="6" r="2"/><circle cx="5" cy="18" r="2"/><circle cx="19" cy="12" r="2"/><path d="M7 6c6 0 4 6 10 6M7 18c6 0 4-6 10-6"/></svg>
+          <h3>Wires you can follow</h3>
+          <p>Sources feeding the same node get distinct colors, left and right get distinct shades, and a right-click disconnects any wire.</p>
+        </article>
+      </div>
+    </section>
+
+    <section id="declare" class="section split">
+      <div>
+        <p class="eyebrow reveal">One file</p>
+        <h2 class="reveal">Draw it once.<br>Declare it forever.</h2>
+        <p class="reveal">
+          Experiment in the editor: what you do is saved next to the config, not into it.
+          When a setup is worth keeping, <code>tuyau state export</code> prints it as rules
+          you can paste into your config or your Home Manager module.
+        </p>
+        <ul class="checks reveal">
+          <li>Unknown keys are errors: typos fail loudly with <code>tuyau check</code>.</li>
+          <li>Durable choices and editor layout live in separate files.</li>
+          <li>The same rules drive the GUI and the background service.</li>
+        </ul>
+      </div>
+      <div class="code reveal">
+        <div class="tabs" role="tablist">
+          <button role="tab" aria-selected="true" data-tab="toml">config.toml</button>
+          <button role="tab" aria-selected="false" data-tab="nix">home.nix</button>
+          <button role="tab" aria-selected="false" data-tab="cli">CLI</button>
+        </div>
+        <pre data-panel="toml"><code><span class="c"># A sink for calls that follows the default output.</span>
+<span class="k">[[device]]</span>
+<span class="n">name</span> = <span class="s">"comms"</span>
+<span class="n">description</span> = <span class="s">"Communication sink"</span>
+
+<span class="k">[[link]]</span>
+<span class="n">from</span> = <span class="s">"comms"</span>
+<span class="n">to</span> = <span class="s">"@default-sink@"</span>
+
+<span class="c"># Music always goes through the equalizer.</span>
+<span class="k">[[link]]</span>
+<span class="n">from</span> = <span class="s">"spotify"</span>
+<span class="n">to</span> = <span class="s">"Easy Effects Sink"</span>
+<span class="n">exclusive</span> = <span class="b">true</span>
+
+<span class="k">[[node]]</span>
+<span class="n">match</span> = <span class="s">"alsa_output.usb-*"</span>
+<span class="n">alias</span> = <span class="s">"Headset"</span>
+<span class="n">volume</span> = <span class="b">0.8</span></code></pre>
+        <pre data-panel="nix" hidden><code><span class="n">imports</span> = [ inputs.tuyau.homeManagerModules.default ];
+
+<span class="n">programs.tuyau</span> = {
+  <span class="n">enable</span> = <span class="b">true</span>;
+  <span class="n">service.enable</span> = <span class="b">true</span>; <span class="c"># runs `tuyau watch`</span>
+  <span class="n">settings</span> = {
+    <span class="n">device</span> = [
+      { <span class="n">name</span> = <span class="s">"comms"</span>; <span class="n">description</span> = <span class="s">"Communication sink"</span>; }
+    ];
+    <span class="n">link</span> = [
+      { <span class="n">from</span> = <span class="s">"comms"</span>; <span class="n">to</span> = <span class="s">"@default-sink@"</span>; }
+      { <span class="n">from</span> = <span class="s">"spotify"</span>; <span class="n">to</span> = <span class="s">"Easy Effects Sink"</span>; }
+    ];
+  };
+};</code></pre>
+        <pre data-panel="cli" hidden><code><span class="c"># What is wired to what</span>
+<span class="p">$</span> tuyau ls
+
+<span class="c"># Wire two nodes, channels paired for you</span>
+<span class="p">$</span> tuyau link spotify Headset
+
+<span class="c"># Levels, relative or absolute</span>
+<span class="p">$</span> tuyau volume Headset 60%
+<span class="p">$</span> tuyau volume Headset +5%
+<span class="p">$</span> tuyau mute Microphone toggle
+
+<span class="c"># Apply the config once, or keep it applied</span>
+<span class="p">$</span> tuyau apply --dry-run
+<span class="p">$</span> tuyau watch</code></pre>
+      </div>
+    </section>
+
+    <section class="section">
+      <p class="eyebrow reveal">In practice</p>
+      <h2 class="reveal">Small things that add up.</h2>
+      <div class="gallery">
+        <figure class="reveal">
+          <img loading="lazy" src="assets/screenshots/wire-menu.webp" width="480" height="320" alt="A right-click menu on a highlighted wire offering Disconnect.">
+          <figcaption><strong>Right-click a wire.</strong> It lights up, names both ends, and disconnects in one click. Even when it runs under a card.</figcaption>
+        </figure>
+        <figure class="reveal">
+          <img loading="lazy" src="assets/screenshots/properties.webp" width="700" height="467" alt="A properties panel listing the PipeWire properties of an audio device.">
+          <figcaption><strong>See what a node really is.</strong> Every PipeWire property, its id and whether it is running.</figcaption>
+        </figure>
+        <figure class="reveal">
+          <img loading="lazy" src="assets/screenshots/device-menu.webp" width="630" height="420" alt="A virtual sink named Stream mix with a menu offering Properties, Hide and Delete device.">
+          <figcaption><strong>Make your own devices.</strong> A virtual sink is one click away, saved, and recreated at login.</figcaption>
+        </figure>
+      </div>
+      <figure class="window wide reveal">
+        <div class="window-bar"><i></i><i></i><i></i><span>tuyau — Fit</span></div>
+        <img loading="lazy" src="assets/screenshots/overview.webp" width="2400" height="570" alt="The whole graph zoomed out: a long microphone effects chain on top and groups of apps below, packed side by side.">
+      </figure>
+    </section>
+
+    <section id="compare" class="section">
+      <p class="eyebrow reveal">Comparison</p>
+      <h2 class="reveal">tuyau and Crosspipe</h2>
+      <p class="reveal narrow">
+        tuyau started as a rewrite of <a href="https://github.com/dp0sk/Crosspipe">Crosspipe</a>,
+        a clean GTK4 graph for PipeWire. Crosspipe is the better pick if you want a GNOME-native
+        app from Flathub. tuyau is for setups you want to keep.
+      </p>
+      <div class="table-wrap reveal">
+        <table>
+          <thead>
+            <tr><th></th><th>tuyau</th><th>Crosspipe</th></tr>
+          </thead>
+          <tbody>
+            <tr><th>Graph with drag-and-drop links</th><td class="yes">Yes</td><td class="yes">Yes</td></tr>
+            <tr><th>Undo and redo</th><td class="yes">Yes</td><td class="yes">Yes</td></tr>
+            <tr><th>Zoom and fit</th><td class="yes">Yes</td><td class="yes">Yes, with keyboard shortcuts</td></tr>
+            <tr><th>Light and dark themes</th><td class="yes">Follows the system</td><td class="yes">Libadwaita</td></tr>
+            <tr><th>Layout</th><td class="yes">Signal-flow layers, fewest crossings, auto-arrange</td><td>Two fixed columns</td></tr>
+            <tr><th>Remembers node positions</th><td class="yes">Yes</td><td class="no">No</td></tr>
+            <tr><th>Volume and mute</th><td class="yes">Yes</td><td class="no">No</td></tr>
+            <tr><th>Rename and hide nodes</th><td class="yes">Yes</td><td class="no">No</td></tr>
+            <tr><th>Links survive restarts</th><td class="yes">Saved and re-applied</td><td class="no">No</td></tr>
+            <tr><th>Config file</th><td class="yes">TOML, Nix-friendly</td><td class="no">No</td></tr>
+            <tr><th>Command line</th><td class="yes">Yes</td><td class="no">No</td></tr>
+            <tr><th>Virtual devices</th><td class="yes">Yes</td><td class="no">No</td></tr>
+            <tr><th>Node properties</th><td class="yes">Yes</td><td class="no">No</td></tr>
+            <tr><th>Wire colors</th><td class="yes">Per source and channel</td><td>Per media type</td></tr>
+            <tr><th>Rubber-band multi-select</th><td class="no">No</td><td class="yes">Yes</td></tr>
+            <tr><th>Packaging</th><td>Nix flake</td><td class="yes">Flathub and distro packages</td></tr>
+            <tr><th>Stack</th><td>Rust, GPUI</td><td>Vala, GTK4</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="fine reveal">Based on Crosspipe's source as of its latest commit (February 2026).</p>
+    </section>
+
+    <section id="install" class="section">
+      <p class="eyebrow reveal">Install</p>
+      <h2 class="reveal">Running in one command.</h2>
+      <div class="steps">
+        <div class="step reveal">
+          <span class="num">1</span>
+          <h3>Try it</h3>
+          <button class="command block" type="button" data-copy="nix run github:Vincent-HD/tuyau">
+            <span class="prompt">$</span><span>nix run github:Vincent-HD/tuyau</span><span class="copy-label">copy</span>
+          </button>
+        </div>
+        <div class="step reveal">
+          <span class="num">2</span>
+          <h3>Keep it</h3>
+          <p>Add the flake input and the Home Manager module, then set <code>programs.tuyau.enable</code> and <code>service.enable</code>.</p>
+        </div>
+        <div class="step reveal">
+          <span class="num">3</span>
+          <h3>Or build it</h3>
+          <button class="command block" type="button" data-copy="nix develop -c cargo run --release">
+            <span class="prompt">$</span><span>nix develop -c cargo run --release</span><span class="copy-label">copy</span>
+          </button>
+        </div>
+      </div>
+      <div class="cta reveal">
+        <a class="button primary" href="https://github.com/Vincent-HD/tuyau">Read the docs on GitHub</a>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <a class="brand" href="#top"><img src="favicon.svg" width="22" height="22" alt=""><span>tuyau</span></a>
+    <p>GPL-3.0-or-later · “tuyau” is French for pipe · Not affiliated with Crosspipe or PipeWire.</p>
+  </footer>
+
+  <script src="main.js" defer></script>
+</body>
+</html>

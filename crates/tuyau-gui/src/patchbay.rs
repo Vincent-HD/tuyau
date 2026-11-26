@@ -114,6 +114,8 @@ pub struct Patchbay {
     positions: BTreeMap<u32, Position>,
     pan: Point<Pixels>,
     zoom: f32,
+    /// No view was saved yet: show the whole graph once it is laid out.
+    fit_pending: bool,
     drag: Option<Drag>,
     rename: Option<Rename>,
     media_filter: BTreeSet<MediaKind>,
@@ -131,6 +133,7 @@ impl Patchbay {
             Ok(settings) => (settings, None),
             Err(error) => (Settings::default(), Some(error.to_string())),
         };
+        let fit_pending = settings.ui.view.is_none();
         let view = settings.ui.view.unwrap_or(View {
             x: 24.0,
             y: 24.0,
@@ -182,6 +185,7 @@ impl Patchbay {
             positions: BTreeMap::new(),
             pan: Point::new(px(view.x), px(view.y)),
             zoom: view.zoom.clamp(MIN_ZOOM, MAX_ZOOM),
+            fit_pending,
             drag: None,
             rename: None,
             media_filter: [
@@ -323,6 +327,11 @@ impl Patchbay {
 
     /// Zooms out (never in past 100%) and pans so every visible node is on screen.
     fn fit(&mut self, window: &Window, cx: &mut Context<Self>) {
+        self.fit_to(window.viewport_size());
+        cx.notify();
+    }
+
+    fn fit_to(&mut self, viewport: gpui::Size<Pixels>) {
         let bounds = self
             .graph
             .nodes
@@ -342,7 +351,6 @@ impl Patchbay {
         let Some((left, top, right, bottom)) = bounds else {
             return;
         };
-        let viewport = window.viewport_size();
         let width = f32::from(viewport.width) - 2.0 * FIT_MARGIN;
         let height = f32::from(viewport.height) - TOOLBAR_HEIGHT - 2.0 * FIT_MARGIN;
         self.zoom = (width / (right - left))
@@ -352,7 +360,6 @@ impl Patchbay {
             px(FIT_MARGIN + (width - (right - left) * self.zoom).max(0.0) / 2.0 - left * self.zoom),
             px(FIT_MARGIN - top * self.zoom),
         );
-        cx.notify();
     }
 
     /// Sets the zoom while keeping the world point under `anchor` (window
@@ -1833,6 +1840,10 @@ impl Patchbay {
 
 impl Render for Patchbay {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.fit_pending && !self.positions.is_empty() {
+            self.fit_pending = false;
+            self.fit_to(window.viewport_size());
+        }
         let theme = Theme::for_window(window);
         let slots = theme::wire_slots(&self.graph);
         let nodes: Vec<AnyElement> = self

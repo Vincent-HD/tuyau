@@ -13,6 +13,8 @@ pub const NODE_WIDTH: f32 = 240.0;
 pub const LAYER_GAP: f32 = 140.0;
 pub const NODE_GAP: f32 = 24.0;
 const COMPONENT_GAP: f32 = 72.0;
+/// Width over height the whole layout aims for when packing groups.
+const TARGET_ASPECT: f32 = 1.8;
 /// Room kept for a wire passing through a layer it does not stop in.
 const LANE_HEIGHT: f32 = 10.0;
 const LANE_GAP: f32 = 6.0;
@@ -105,31 +107,64 @@ fn layout_all(
         .into_iter()
         .partition(|component| component.len() > 1);
 
+    // (positions, width, height) of each group laid out on its own.
+    let groups: Vec<(BTreeMap<u32, Position>, f32, f32)> = linked
+        .iter()
+        .map(|component| {
+            let members: BTreeSet<u32> = component.iter().copied().collect();
+            let component_edges: Vec<Edge> = edges
+                .iter()
+                .filter(|edge| members.contains(&edge.from))
+                .copied()
+                .collect();
+            let placed = layered(component, heights, &component_edges);
+            let width = placed
+                .values()
+                .map(|position| position.x + NODE_WIDTH)
+                .fold(0.0, f32::max);
+            let height = placed
+                .iter()
+                .map(|(id, position)| position.y + heights[id])
+                .fold(0.0, f32::max);
+            (placed, width, height)
+        })
+        .collect();
+
+    // Groups go side by side in rows, like words on a page. Rows are as wide as
+    // the widest group, or wider when that keeps the whole layout screen-shaped
+    // instead of a tall strip.
+    let widest = groups.iter().map(|group| group.1).fold(0.0, f32::max);
+    let area: f32 = groups
+        .iter()
+        .map(|(_, width, height)| (width + COMPONENT_GAP) * (height + COMPONENT_GAP))
+        .sum();
+    let row_width = widest.max((area * TARGET_ASPECT).sqrt());
+
     let mut positions = BTreeMap::new();
-    let mut top = 0.0;
-    for component in linked {
-        let members: BTreeSet<u32> = component.iter().copied().collect();
-        let component_edges: Vec<Edge> = edges
-            .iter()
-            .filter(|edge| members.contains(&edge.from))
-            .copied()
-            .collect();
-        let placed = layered(&component, heights, &component_edges);
-        let bottom = placed
-            .iter()
-            .map(|(id, position)| position.y + heights[id])
-            .fold(0.0, f32::max);
+    let (mut left, mut top, mut row_height) = (0.0, 0.0, 0.0_f32);
+    for (placed, width, height) in groups {
+        if left > 0.0 && left + width > row_width {
+            top += row_height + COMPONENT_GAP;
+            left = 0.0;
+            row_height = 0.0;
+        }
         for (id, position) in placed {
             positions.insert(
                 id,
                 Position {
-                    x: position.x,
+                    x: position.x + left,
                     y: position.y + top,
                 },
             );
         }
-        top += bottom + COMPONENT_GAP;
+        left += width + COMPONENT_GAP;
+        row_height = row_height.max(height);
     }
+    let mut top = if positions.is_empty() {
+        0.0
+    } else {
+        top + row_height + COMPONENT_GAP
+    };
 
     let mut loose: Vec<u32> = loose.into_iter().flatten().collect();
     loose.sort_by_key(|id| {
@@ -144,7 +179,8 @@ fn layout_all(
             node.id,
         )
     });
-    for row in loose.chunks(LOOSE_ROW_CARDS) {
+    let cards_per_row = ((row_width / (NODE_WIDTH + LAYER_GAP)) as usize).max(LOOSE_ROW_CARDS);
+    for row in loose.chunks(cards_per_row) {
         for (column, id) in row.iter().enumerate() {
             positions.insert(
                 *id,
@@ -880,6 +916,34 @@ mod tests {
         }
         connect(&mut builder, filters[0], filters[1], "FL");
         assert_no_overlap(&builder, &layout(&builder, &Settings::default()));
+    }
+
+    #[test]
+    fn small_groups_sit_side_by_side_under_a_wide_one() {
+        let mut builder = Builder::new();
+        let chain: Vec<u32> = (0..6)
+            .map(|index| builder.node(&format!("fx{index}"), "Audio/Sink", &["MONO"], &["MONO"]))
+            .collect();
+        for pair in chain.windows(2) {
+            connect(&mut builder, pair[0], pair[1], "MONO");
+        }
+        let mut pairs = Vec::new();
+        for index in 0..2 {
+            let app = builder.node(
+                &format!("app{index}"),
+                "Stream/Output/Audio",
+                &[],
+                &["MONO"],
+            );
+            let sink = builder.node(&format!("out{index}"), "Audio/Sink", &["MONO"], &[]);
+            connect(&mut builder, app, sink, "MONO");
+            pairs.push(app);
+        }
+        let positions = layout(&builder, &Settings::default());
+        assert_eq!(positions[&pairs[0]].y, positions[&pairs[1]].y);
+        assert!(positions[&pairs[0]].x < positions[&pairs[1]].x);
+        assert!(positions[&pairs[0]].y > positions[&chain[0]].y);
+        assert_no_overlap(&builder, &positions);
     }
 
     #[test]
