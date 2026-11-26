@@ -5,7 +5,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use tuyau_core::{PortPair, Position};
+use tuyau_core::{DeviceRule, PortPair, Position};
 
 const LIMIT: usize = 200;
 /// Volume changes on one node closer together than this are one step, so a
@@ -42,6 +42,11 @@ pub enum Edit {
     Layout {
         before: Layout,
         after: Layout,
+    },
+    /// A virtual device declared in the state file, or removed from it.
+    Device {
+        rule: DeviceRule,
+        present: bool,
     },
 }
 
@@ -96,6 +101,10 @@ impl Edit {
             Self::Layout { before, after } => Self::Layout {
                 before: after,
                 after: before,
+            },
+            Self::Device { rule, present } => Self::Device {
+                rule,
+                present: !present,
             },
         }
     }

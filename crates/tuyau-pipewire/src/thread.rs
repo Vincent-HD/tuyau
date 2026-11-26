@@ -12,7 +12,10 @@ use pipewire::{
     spa::{param::ParamType, pod::Pod, utils::dict::DictRef},
     types::ObjectType,
 };
-use tuyau_core::{Direction, Graph, Link, MediaKind, Node, NodeState, Port, PortPair, Volume};
+use tuyau_core::{
+    Direction, Graph, Link, MediaKind, Node, NodeState, Port, PortPair, Volume, config::DeviceRule,
+    graph::DEVICE_PROPERTY,
+};
 
 use crate::{
     Command, Event,
@@ -29,6 +32,10 @@ struct Shared {
     nodes: RefCell<HashMap<u32, (pw::node::Node, pw::node::NodeListener)>>,
     /// Link proxies kept until the server confirmed them with a sync.
     pending_links: RefCell<Vec<pw::link::Link>>,
+    /// Same for the devices tuyau creates.
+    pending_devices: RefCell<Vec<pw::node::Node>>,
+    /// The `default` metadata, which names the default sink.
+    metadata: RefCell<Option<(pw::metadata::Metadata, pw::metadata::MetadataListener)>>,
     sync_tokens: RefCell<HashMap<i32, u64>>,
     dirty: Cell<bool>,
     events: async_channel::Sender<Event>,
@@ -75,6 +82,8 @@ pub fn run(
         graph: RefCell::default(),
         nodes: RefCell::default(),
         pending_links: RefCell::default(),
+        pending_devices: RefCell::default(),
+        metadata: RefCell::default(),
         sync_tokens: RefCell::default(),
         dirty: Cell::new(true),
         events,
@@ -92,6 +101,7 @@ pub fn run(
                     return;
                 };
                 shared.pending_links.borrow_mut().clear();
+                shared.pending_devices.borrow_mut().clear();
                 shared.publish(true);
                 shared.emit(Event::Synced(token));
             }
@@ -149,6 +159,11 @@ pub fn run(
                             });
                         }
                     }
+                    ObjectType::Metadata if props.get("metadata.name") == Some("default") => {
+                        if let Some(registry) = registry.upgrade() {
+                            bind_default_metadata(&shared, &registry, global);
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -197,9 +212,16 @@ fn handle_command(
             Ok(link) => shared.pending_links.borrow_mut().push(link),
             Err(error) => shared.emit(Event::Error(format!("cannot create link: {error}"))),
         },
-        Command::Unlink(link_id) => {
-            registry.destroy_global(link_id);
+        Command::Unlink(id) | Command::Destroy(id) => {
+            registry.destroy_global(id);
         }
+        Command::CreateDevice(rule) => match create_device(core, &rule) {
+            Ok(node) => shared.pending_devices.borrow_mut().push(node),
+            Err(error) => shared.emit(Event::Error(format!(
+                "cannot create device {}: {error}",
+                rule.name
+            ))),
+        },
         Command::SetVolume { node_id, channels } => set_props(
             shared,
             node_id,
@@ -237,6 +259,68 @@ fn create_link(core: &pw::core::CoreRc, pair: PortPair) -> Result<pw::link::Link
             "object.linger" => "true",
         },
     )
+}
+
+/// A null sink or source: a node that only moves audio between its ports. It
+/// lingers, so it stays after tuyau exits, until PipeWire restarts.
+fn create_device(core: &pw::core::CoreRc, rule: &DeviceRule) -> Result<pw::node::Node, pw::Error> {
+    let description = rule
+        .description
+        .clone()
+        .unwrap_or_else(|| rule.name.clone());
+    core.create_object::<pw::node::Node>(
+        "adapter",
+        &properties! {
+            "factory.name" => "support.null-audio-sink",
+            "node.name" => rule.name.clone(),
+            "node.description" => description,
+            "media.class" => rule.media_class(),
+            "audio.position" => rule.channels.join(","),
+            "monitor.channel-volumes" => "true",
+            "node.virtual" => "true",
+            // Low priority, so WirePlumber never makes it the default device.
+            "priority.session" => "1",
+            "priority.driver" => "1",
+            "object.linger" => "true",
+            DEVICE_PROPERTY => "true",
+        },
+    )
+}
+
+/// WirePlumber's `default` metadata names the default sink as JSON:
+/// `{ "name": "alsa_output.usb-…" }`.
+fn default_sink_name(value: &str) -> Option<String> {
+    let json: serde_json::Value = serde_json::from_str(value).ok()?;
+    Some(json.get("name")?.as_str()?.to_owned())
+}
+
+fn bind_default_metadata(
+    shared: &Rc<Shared>,
+    registry: &pw::registry::RegistryRc,
+    global: &pw::registry::GlobalObject<&DictRef>,
+) {
+    let metadata: pw::metadata::Metadata = match registry.bind(global) {
+        Ok(metadata) => metadata,
+        Err(error) => {
+            shared.emit(Event::Error(format!("cannot bind metadata: {error}")));
+            return;
+        }
+    };
+    let weak = Rc::downgrade(shared);
+    let listener = metadata
+        .add_listener_local()
+        .property(move |_subject, key, _type, value| {
+            let Some(shared) = weak.upgrade() else {
+                return 0;
+            };
+            if key.is_none() || key == Some("default.audio.sink") {
+                let sink = value.and_then(default_sink_name);
+                shared.update(|graph| graph.default_sink = sink);
+            }
+            0
+        })
+        .register();
+    *shared.metadata.borrow_mut() = Some((metadata, listener));
 }
 
 fn set_props(shared: &Shared, node_id: u32, props: &Props) {

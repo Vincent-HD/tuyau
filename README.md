@@ -31,7 +31,9 @@ Or `nix develop`, then `cargo run --release`.
 | Zoom | <kbd>Ctrl</kbd> + scroll; *Fit* shows everything, the percentage button resets to 100% |
 | Rename | Double-click the title, type, <kbd>Enter</kbd> (empty name resets) |
 | Volume | Drag or scroll the slider; **M** toggles mute |
-| Undo / redo | <kbd>Ctrl</kbd>+<kbd>Z</kbd> / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd> or <kbd>Ctrl</kbd>+<kbd>Y</kbd>: links, volume, mute, moves, renames, hiding |
+| Undo / redo | <kbd>Ctrl</kbd>+<kbd>Z</kbd> / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd> or <kbd>Ctrl</kbd>+<kbd>Y</kbd>: links, volume, mute, moves, renames, hiding, devices |
+| Virtual device | *New device* creates a virtual sink; right-click its card → *Delete device* |
+| Node menu | Right-click a card: properties, hide, delete (devices made in the GUI) |
 
 The GUI never writes the config. It keeps two files in `$XDG_STATE_HOME/tuyau/`:
 
@@ -90,7 +92,19 @@ exclusive = true                       # remove other links leaving Music
 from = "Synth"
 to = "Monitors"
 ports = [["FL", "FR"], ["FR", "FL"]]   # swap channels; matches port name, alias or channel
+
+# Virtual devices are created when missing and removed once no longer declared.
+[[device]]
+name = "comms"                         # node.name, what rules refer to
+description = "Communication sink"
+kind = "sink"                          # or "source"; channels = ["FL", "FR"] by default
+
+[[link]]
+from = "comms"
+to = "@default-sink@"                  # follows the default sink as it changes
 ```
+
+Devices are null sinks/sources that outlive tuyau until PipeWire restarts; `tuyau watch` (or the GUI with *Auto-connect*) recreates them at login. tuyau only ever removes devices it created, and never takes the default device (they get a low priority).
 
 Unknown keys are errors, so typos fail loudly (`tuyau check`).
 

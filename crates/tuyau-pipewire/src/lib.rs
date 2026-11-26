@@ -9,14 +9,18 @@ use std::{sync::Arc, thread::JoinHandle, time::Duration};
 
 use anyhow::{Context, anyhow, bail};
 use pipewire as pw;
-use tuyau_core::{Graph, PortPair};
+use tuyau_core::{Graph, PortPair, config::DeviceRule};
 
-pub use reconciler::Reconciler;
+pub use reconciler::{Plan, Reconciler};
 
 #[derive(Debug, Clone)]
 pub enum Command {
     Link(PortPair),
     Unlink(u32),
+    /// Creates a virtual device that outlives this client.
+    CreateDevice(DeviceRule),
+    /// Removes any global object, e.g. a device tuyau created.
+    Destroy(u32),
     /// Linear channel volumes.
     SetVolume {
         node_id: u32,

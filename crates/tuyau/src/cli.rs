@@ -6,7 +6,7 @@ use tuyau_core::{
     Config, Direction, Graph, LinkRule, Node, NodeMatcher, Pattern, Settings, State, Ui,
     config::PortMapping,
     graph::level_to_linear,
-    reconcile::{desired_links, plan_links},
+    reconcile::{desired_links, plan_devices, plan_links},
 };
 use tuyau_pipewire::{Command as PipeWireCommand, Connection, Event, Reconciler};
 
@@ -134,6 +134,7 @@ pub fn run(command: Command, paths: &Paths) -> anyhow::Result<()> {
                 config: Config {
                     nodes: settings.config.nodes,
                     links: vec![rule],
+                    devices: Vec::new(),
                 },
                 state: State {
                     links: Vec::new(),
@@ -244,6 +245,15 @@ pub fn run(command: Command, paths: &Paths) -> anyhow::Result<()> {
             let settings = settings()?;
             let (mut connection, graph) = connect()?;
             if dry_run {
+                let devices = plan_devices(&graph, &settings);
+                for rule in &devices.create {
+                    println!("+ device {}", rule.name);
+                }
+                for id in &devices.destroy {
+                    if let Some(node) = graph.nodes.get(id) {
+                        println!("- device {}", node.name);
+                    }
+                }
                 let plan = plan_links(&graph, &settings);
                 for pair in &plan.create {
                     println!("+ {}", describe_pair(&graph, &settings, pair));
@@ -253,17 +263,43 @@ pub fn run(command: Command, paths: &Paths) -> anyhow::Result<()> {
                         println!("- {}", describe_pair(&graph, &settings, &link.ports));
                     }
                 }
-                if plan.is_empty() {
-                    println!("links are up to date");
+                if devices.is_empty() && plan.is_empty() {
+                    println!("devices and links are up to date");
                 }
                 return Ok(());
             }
-            let plan = Reconciler::default().reconcile(&graph, &settings, &connection.commands());
-            connection.roundtrip(TIMEOUT)?;
+            let commands = connection.commands();
+            let mut reconciler = Reconciler::default();
+            let plan = reconciler.reconcile(&graph, &settings, &commands);
+            let mut graph = connection.roundtrip(TIMEOUT)?;
+            let mut links = plan.links;
+            // Links to new devices can only be planned once their ports exist.
+            if !plan.devices.create.is_empty() {
+                let has_ports = |graph: &Graph| {
+                    plan.devices.create.iter().all(|rule| {
+                        graph.nodes.values().any(|node| {
+                            node.name == rule.name
+                                && graph.ports.values().any(|port| port.node_id == node.id)
+                        })
+                    })
+                };
+                for _ in 0..5 {
+                    if has_ports(&graph) {
+                        break;
+                    }
+                    graph = connection.roundtrip(TIMEOUT)?;
+                }
+                let more = reconciler.reconcile(&graph, &settings, &commands).links;
+                links.create.extend(more.create);
+                links.destroy.extend(more.destroy);
+                connection.roundtrip(TIMEOUT)?;
+            }
             println!(
-                "created {} link(s), removed {} link(s)",
-                plan.create.len(),
-                plan.destroy.len()
+                "created {} device(s), removed {} device(s), created {} link(s), removed {} link(s)",
+                plan.devices.create.len(),
+                plan.devices.destroy.len(),
+                links.create.len(),
+                links.destroy.len()
             );
             Ok(())
         }
@@ -278,10 +314,11 @@ pub fn run(command: Command, paths: &Paths) -> anyhow::Result<()> {
             }
             let config = Config::load(&paths.config)?;
             println!(
-                "{}: {} node rule(s), {} link rule(s)",
+                "{}: {} node rule(s), {} link rule(s), {} device(s)",
                 paths.config.display(),
                 config.nodes.len(),
-                config.links.len()
+                config.links.len(),
+                config.devices.len()
             );
             Ok(())
         }
@@ -350,6 +387,15 @@ fn watch(paths: &Paths) -> anyhow::Result<()> {
                     }
                 }
                 let plan = reconciler.reconcile(&graph, &settings, &commands);
+                for rule in &plan.devices.create {
+                    eprintln!("+ device {}", rule.name);
+                }
+                for id in &plan.devices.destroy {
+                    if let Some(node) = graph.nodes.get(id) {
+                        eprintln!("- device {}", node.name);
+                    }
+                }
+                let plan = plan.links;
                 for pair in &plan.create {
                     eprintln!("+ {}", describe_pair(&graph, &settings, pair));
                 }

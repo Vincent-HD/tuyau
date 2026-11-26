@@ -10,8 +10,8 @@ use gpui::{
     StatefulInteractiveElement, Styled, Window, canvas, div, prelude::FluentBuilder, px,
 };
 use tuyau_core::{
-    Config, Direction, Graph, Link, LinkRule, MediaKind, Node, NodeState, Port, PortPair, Position,
-    Settings, State, Ui, View,
+    Config, DeviceKind, DeviceRule, Direction, Graph, Link, LinkRule, MediaKind, Node, NodeState,
+    Port, PortPair, Position, Settings, State, Ui, View,
     graph::level_to_linear,
     layout::{self, NODE_WIDTH},
 };
@@ -69,10 +69,24 @@ struct Shape {
     edges: BTreeSet<(u32, u32)>,
 }
 
-struct WireMenu {
-    pair: PortPair,
+/// The menu opened by a right-click.
+struct Menu {
+    target: MenuTarget,
     /// Where the click happened, in window coordinates.
     at: Point<Pixels>,
+}
+
+enum MenuTarget {
+    Wire(PortPair),
+    Node(u32),
+}
+
+#[derive(Clone)]
+enum MenuAction {
+    Disconnect(PortPair),
+    Inspect(u32),
+    Hide(u32),
+    DeleteDevice(String),
 }
 
 struct Rename {
@@ -90,8 +104,7 @@ pub struct Patchbay {
     history: History,
     /// The node whose properties panel is open.
     inspected: Option<u32>,
-    /// The menu opened by right-clicking a wire.
-    wire_menu: Option<WireMenu>,
+    menu: Option<Menu>,
     /// Nothing is placed before PipeWire has listed the whole graph, or every node
     /// would look unlinked.
     settled: bool,
@@ -162,7 +175,7 @@ impl Patchbay {
             reconciler: Reconciler::default(),
             history: History::default(),
             inspected: None,
-            wire_menu: None,
+            menu: None,
             auto_connect: true,
             shape: Shape::default(),
             settled: false,
@@ -587,6 +600,26 @@ impl Patchbay {
                 self.save_state();
                 self.place_new_nodes();
             }
+            Edit::Device { rule, present } => {
+                let devices = &mut self.settings.state.devices;
+                devices.retain(|saved| saved.name != rule.name);
+                if *present {
+                    devices.push(rule.clone());
+                }
+                self.save_state();
+                if self.auto_connect {
+                    self.reconcile();
+                } else if *present {
+                    self.commands.send(Command::CreateDevice(rule.clone()));
+                } else if let Some(node) = self
+                    .graph
+                    .nodes
+                    .values()
+                    .find(|node| node.name == rule.name && node.is_tuyau_device())
+                {
+                    self.commands.send(Command::Destroy(node.id));
+                }
+            }
             Edit::Layout { after, .. } => {
                 self.settings.ui.positions = after.saved.clone();
                 self.positions = after.shown.clone();
@@ -729,7 +762,7 @@ impl Patchbay {
     fn on_key_down(&mut self, event: &KeyDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
         let Some(rename) = &mut self.rename else {
             if event.keystroke.key == "escape"
-                && (self.wire_menu.take().is_some() || self.inspected.take().is_some())
+                && (self.menu.take().is_some() || self.inspected.take().is_some())
             {
                 cx.notify();
             }
@@ -893,6 +926,15 @@ impl Patchbay {
                     })),
             )
             .child(
+                button(theme, "new-device", "New device", false)
+                    .tooltip(tip(
+                        theme,
+                        "Create a virtual sink. It is saved in state.toml and recreated \
+                         on start; right-click its card to delete it.",
+                    ))
+                    .on_click(cx.listener(|this, _, _, cx| this.new_device(cx))),
+            )
+            .child(
                 button(theme, "reload", "Reload config", false)
                     .tooltip(tip(
                         theme,
@@ -937,7 +979,13 @@ impl Patchbay {
 
     fn render_wires(&self, theme: &Theme) -> impl IntoElement {
         let slots = theme::wire_slots(&self.graph);
-        let targeted = self.wire_menu.as_ref().map(|menu| menu.pair);
+        let targeted = match &self.menu {
+            Some(Menu {
+                target: MenuTarget::Wire(pair),
+                ..
+            }) => Some(*pair),
+            _ => None,
+        };
         // (from, to, color, highlighted)
         let mut ends: Vec<(Position, Position, Hsla, bool)> = self
             .graph
@@ -1208,6 +1256,17 @@ impl Patchbay {
                     cx.notify();
                 }),
             )
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(move |this, event: &MouseDownEvent, _, cx| {
+                    cx.stop_propagation();
+                    this.menu = Some(Menu {
+                        target: MenuTarget::Node(node_id),
+                        at: event.position,
+                    });
+                    cx.notify();
+                }),
+            )
             .on_mouse_up(
                 MouseButton::Left,
                 cx.listener(move |this, _: &MouseUpEvent, _, cx| {
@@ -1288,14 +1347,116 @@ impl Patchbay {
         format!("{node} {port}")
     }
 
-    fn render_wire_menu(&self, theme: &Theme, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let menu = self.wire_menu.as_ref()?;
-        let pair = menu.pair;
-        let title = format!(
-            "{} → {}",
-            self.port_description(pair.output_node, pair.output_port),
-            self.port_description(pair.input_node, pair.input_port),
-        );
+    /// The menu's title and entries for what was right-clicked.
+    fn menu_entries(&self, target: &MenuTarget) -> (String, Vec<(&'static str, MenuAction)>) {
+        match *target {
+            MenuTarget::Wire(pair) => (
+                format!(
+                    "{} → {}",
+                    self.port_description(pair.output_node, pair.output_port),
+                    self.port_description(pair.input_node, pair.input_port),
+                ),
+                vec![("Disconnect", MenuAction::Disconnect(pair))],
+            ),
+            MenuTarget::Node(node_id) => {
+                let Some(node) = self.graph.nodes.get(&node_id) else {
+                    return (String::new(), Vec::new());
+                };
+                let mut entries = vec![
+                    ("Properties", MenuAction::Inspect(node_id)),
+                    ("Hide", MenuAction::Hide(node_id)),
+                ];
+                let in_state = self
+                    .settings
+                    .state
+                    .devices
+                    .iter()
+                    .any(|rule| rule.name == node.name);
+                if in_state {
+                    entries.push(("Delete device", MenuAction::DeleteDevice(node.name.clone())));
+                }
+                (self.settings.display_name(node).to_owned(), entries)
+            }
+        }
+    }
+
+    /// Declares a new virtual sink with the first free `tuyau-sink-N` name.
+    fn new_device(&mut self, cx: &mut Context<Self>) {
+        let taken = |name: &str| {
+            self.settings.device_rules().any(|rule| rule.name == name)
+                || self.graph.nodes.values().any(|node| node.name == name)
+        };
+        let Some(number) = (1..).find(|number| !taken(&format!("tuyau-sink-{number}"))) else {
+            return;
+        };
+        self.edit(Edit::Device {
+            rule: DeviceRule {
+                name: format!("tuyau-sink-{number}"),
+                description: Some(format!("Virtual sink {number}")),
+                kind: DeviceKind::Sink,
+                channels: vec!["FL".into(), "FR".into()],
+            },
+            present: true,
+        });
+        self.status = Some(format!(
+            "created Virtual sink {number}: double-click its title to rename it"
+        ));
+        cx.notify();
+    }
+
+    fn run_menu_action(&mut self, action: MenuAction, cx: &mut Context<Self>) {
+        match action {
+            MenuAction::Disconnect(pair) => self.edit(Edit::Unlink(pair)),
+            MenuAction::Inspect(node_id) => self.inspected = Some(node_id),
+            MenuAction::Hide(node_id) => self.hide(node_id, cx),
+            MenuAction::DeleteDevice(name) => {
+                if let Some(rule) = self
+                    .settings
+                    .state
+                    .devices
+                    .iter()
+                    .find(|rule| rule.name == name)
+                    .cloned()
+                {
+                    self.edit(Edit::Device {
+                        rule,
+                        present: false,
+                    });
+                }
+            }
+        }
+    }
+
+    fn render_menu(&self, theme: &Theme, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let menu = self.menu.as_ref()?;
+        let (title, entries) = self.menu_entries(&menu.target);
+        let items = entries
+            .into_iter()
+            .enumerate()
+            .map(|(index, (label, action))| {
+                let danger = matches!(
+                    action,
+                    MenuAction::Disconnect(_) | MenuAction::DeleteDevice(_)
+                );
+                div()
+                    .id(("menu-item", index))
+                    .px_2()
+                    .py_1()
+                    .rounded_sm()
+                    .cursor_pointer()
+                    .text_color(if danger { theme.danger } else { theme.text })
+                    .hover_style(|style| style.bg(theme.button_hover))
+                    .child(label)
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |this, _: &MouseDownEvent, _, cx| {
+                            cx.stop_propagation();
+                            this.menu = None;
+                            this.run_menu_action(action.clone(), cx);
+                            cx.notify();
+                        }),
+                    )
+            });
         Some(
             div()
                 .absolute()
@@ -1321,26 +1482,7 @@ impl Patchbay {
                         .text_color(theme.muted_text)
                         .child(title),
                 )
-                .child(
-                    div()
-                        .id("disconnect")
-                        .px_2()
-                        .py_1()
-                        .rounded_sm()
-                        .cursor_pointer()
-                        .text_color(theme.danger)
-                        .hover_style(|style| style.bg(theme.button_hover))
-                        .child("Disconnect")
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(move |this, _: &MouseDownEvent, _, cx| {
-                                cx.stop_propagation();
-                                this.wire_menu = None;
-                                this.edit(Edit::Unlink(pair));
-                                cx.notify();
-                            }),
-                        ),
-                )
+                .children(items)
                 .into_any_element(),
         )
     }
@@ -1705,7 +1847,7 @@ impl Render for Patchbay {
             .collect();
         let handles = self.render_wire_handles(&theme, cx);
         let inspector = self.render_inspector(&theme, cx);
-        let wire_menu = self.render_wire_menu(&theme, cx);
+        let menu = self.render_menu(&theme, cx);
         let empty = self.graph.nodes.is_empty();
 
         div()
@@ -1723,7 +1865,7 @@ impl Render for Patchbay {
                 this.focus.focus(window, cx);
                 // Any click closes the wire menu; a click on its item was bound
                 // with the wire already.
-                if this.wire_menu.take().is_some() {
+                if this.menu.take().is_some() {
                     cx.notify();
                 }
             }))
@@ -1753,8 +1895,8 @@ impl Render for Patchbay {
                     .on_mouse_down(
                         MouseButton::Right,
                         cx.listener(|this, event: &MouseDownEvent, _, cx| {
-                            this.wire_menu = this.wire_at(event.position).map(|pair| WireMenu {
-                                pair,
+                            this.menu = this.wire_at(event.position).map(|pair| Menu {
+                                target: MenuTarget::Wire(pair),
                                 at: event.position,
                             });
                             cx.notify();
@@ -1782,7 +1924,7 @@ impl Render for Patchbay {
                     .children(handles)
                     .children(nodes)
                     .children(inspector)
-                    .children(wire_menu)
+                    .children(menu)
                     .when(empty, |graph| {
                         graph.child(
                             div()

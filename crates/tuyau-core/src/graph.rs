@@ -104,7 +104,15 @@ const GENERIC_MEDIA_NAMES: [&str; 8] = [
     "input",
 ];
 
+/// Set on the virtual devices tuyau creates, so it knows which ones it manages.
+pub const DEVICE_PROPERTY: &str = "tuyau.device";
+
 impl Node {
+    /// Whether tuyau created this node for a `[[device]]` rule.
+    pub fn is_tuyau_device(&self) -> bool {
+        self.properties.get(DEVICE_PROPERTY).map(String::as_str) == Some("true")
+    }
+
     /// `media.name` when it tells this stream apart from the app's others. Devices
     /// and filters put internal names there, so only streams have one.
     pub fn media_detail(&self) -> Option<&str> {
@@ -165,6 +173,8 @@ pub struct Graph {
     pub nodes: BTreeMap<u32, Node>,
     pub ports: BTreeMap<u32, Port>,
     pub links: BTreeMap<u32, Link>,
+    /// `node.name` of the default sink, as WirePlumber publishes it.
+    pub default_sink: Option<String>,
 }
 
 impl Graph {

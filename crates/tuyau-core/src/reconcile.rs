@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 
 use crate::{
-    config::{LinkRule, Settings},
+    config::{DeviceRule, LinkRule, NodeMatcher, Settings},
     graph::{Direction, Graph, MediaKind, Node, Port, PortPair, level_to_linear},
 };
 
@@ -52,15 +52,63 @@ pub fn plan_links(graph: &Graph, settings: &Settings) -> LinkPlan {
     LinkPlan { create, destroy }
 }
 
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct DevicePlan {
+    /// Declared devices with no node of that name yet.
+    pub create: Vec<DeviceRule>,
+    /// Nodes tuyau created that are no longer declared, or duplicates.
+    pub destroy: Vec<u32>,
+}
+
+impl DevicePlan {
+    pub fn is_empty(&self) -> bool {
+        self.create.is_empty() && self.destroy.is_empty()
+    }
+}
+
+/// Virtual devices to create or remove so the graph has exactly the declared ones.
+/// A node of the same name that tuyau did not create (e.g. from the PipeWire
+/// config) counts as present and is never touched.
+pub fn plan_devices(graph: &Graph, settings: &Settings) -> DevicePlan {
+    let mut declared = BTreeSet::new();
+    let create = settings
+        .device_rules()
+        .filter(|rule| declared.insert(rule.name.as_str()))
+        .filter(|rule| !graph.nodes.values().any(|node| node.name == rule.name))
+        .cloned()
+        .collect();
+    let mut kept = BTreeSet::new();
+    let destroy = graph
+        .nodes
+        .values()
+        .filter(|node| node.is_tuyau_device())
+        .filter(|node| !declared.contains(node.name.as_str()) || !kept.insert(node.name.as_str()))
+        .map(|node| node.id)
+        .collect();
+    DevicePlan { create, destroy }
+}
+
+/// Nodes with ports in `direction` that `matcher` selects.
+fn matching<'a>(
+    graph: &'a Graph,
+    settings: &'a Settings,
+    matcher: &'a NodeMatcher,
+    direction: Direction,
+) -> impl Iterator<Item = &'a Node> + 'a {
+    graph.nodes.values().filter(move |node| {
+        let selected = if matcher.is_default_sink() {
+            graph.default_sink.as_deref() == Some(node.name.as_str())
+        } else {
+            settings.matches(matcher, node)
+        };
+        selected && graph.has_ports(node.id, direction)
+    })
+}
+
 fn rule_pairs(graph: &Graph, settings: &Settings, rule: &LinkRule) -> Vec<PortPair> {
-    let matching = |matcher, direction| {
-        graph.nodes.values().filter(move |node| {
-            graph.has_ports(node.id, direction) && settings.matches(matcher, node)
-        })
-    };
-    matching(&rule.from, Direction::Output)
+    matching(graph, settings, &rule.from, Direction::Output)
         .flat_map(|source| {
-            matching(&rule.to, Direction::Input)
+            matching(graph, settings, &rule.to, Direction::Input)
                 .filter(move |sink| sink.id != source.id)
                 .flat_map(move |sink| node_pairs(graph, source, sink, rule))
         })
@@ -195,6 +243,60 @@ mod tests {
             config: Config::parse(text, Path::new("test.toml")).expect("test config parses"),
             ..Settings::default()
         }
+    }
+
+    fn mark_as_device(builder: &mut Builder, node: u32) {
+        builder
+            .graph
+            .nodes
+            .get_mut(&node)
+            .expect("fixture node")
+            .properties
+            .insert(crate::graph::DEVICE_PROPERTY.into(), "true".into());
+    }
+
+    #[test]
+    fn devices_are_created_and_removed_to_match_the_rules() {
+        let mut builder = Builder::new();
+        let kept = builder.node("comms", "Audio/Sink", &["FL", "FR"], &["FL", "FR"]);
+        let stale = builder.node("old", "Audio/Sink", &["FL", "FR"], &["FL", "FR"]);
+        let duplicate = builder.node("comms", "Audio/Sink", &["FL", "FR"], &["FL", "FR"]);
+        let foreign = builder.node("system", "Audio/Sink", &["FL", "FR"], &[]);
+        for node in [kept, stale, duplicate] {
+            mark_as_device(&mut builder, node);
+        }
+        let settings = settings(
+            r#"
+            [[device]]
+            name = "comms"
+            [[device]]
+            name = "system"
+            [[device]]
+            name = "music"
+            kind = "source"
+            "#,
+        );
+        let plan = plan_devices(&builder.graph, &settings);
+        let created: Vec<&str> = plan.create.iter().map(|rule| rule.name.as_str()).collect();
+        assert_eq!(created, ["music"]);
+        assert_eq!(plan.destroy, [stale, duplicate]);
+        assert!(!plan.destroy.contains(&foreign));
+    }
+
+    #[test]
+    fn links_follow_the_default_sink() {
+        let mut builder = Builder::new();
+        let comms = builder.node("comms", "Audio/Sink", &["FL", "FR"], &["FL", "FR"]);
+        let headset = builder.node("headset", "Audio/Sink", &["FL", "FR"], &[]);
+        builder.node("speakers", "Audio/Sink", &["FL", "FR"], &[]);
+        builder.graph.default_sink = Some("headset".into());
+        let plan = plan_links(
+            &builder.graph,
+            &settings("[[link]]\nfrom = \"comms\"\nto = \"@default-sink@\""),
+        );
+        assert_eq!(plan.create.len(), 2);
+        assert!(plan.create.iter().all(|pair| pair.output_node == comms));
+        assert!(plan.create.iter().all(|pair| pair.input_node == headset));
     }
 
     #[test]

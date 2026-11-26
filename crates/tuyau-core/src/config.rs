@@ -186,6 +186,47 @@ pub struct LinkRule {
     pub exclusive: bool,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DeviceKind {
+    /// Apps play into it; its monitor ports carry what they play.
+    #[default]
+    Sink,
+    /// Apps record from it; whatever is linked into it is what they hear.
+    Source,
+}
+
+/// A virtual device tuyau creates and keeps while it is declared.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case")]
+pub struct DeviceRule {
+    /// Its `node.name`, how links and node rules refer to it.
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub kind: DeviceKind,
+    #[serde(default = "stereo", skip_serializing_if = "is_stereo")]
+    pub channels: Vec<String>,
+}
+
+fn stereo() -> Vec<String> {
+    vec!["FL".into(), "FR".into()]
+}
+
+fn is_stereo(channels: &Vec<String>) -> bool {
+    *channels == stereo()
+}
+
+impl DeviceRule {
+    pub fn media_class(&self) -> &'static str {
+        match self.kind {
+            DeviceKind::Sink => "Audio/Sink",
+            DeviceKind::Source => "Audio/Source/Virtual",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
 pub struct Config {
@@ -193,6 +234,8 @@ pub struct Config {
     pub nodes: Vec<NodeRule>,
     #[serde(default, rename = "link", skip_serializing_if = "Vec::is_empty")]
     pub links: Vec<LinkRule>,
+    #[serde(default, rename = "device", skip_serializing_if = "Vec::is_empty")]
+    pub devices: Vec<DeviceRule>,
 }
 
 impl Config {
@@ -237,6 +280,8 @@ pub struct State {
     pub hidden: BTreeSet<String>,
     #[serde(rename = "link", skip_serializing_if = "Vec::is_empty")]
     pub links: Vec<LinkRule>,
+    #[serde(rename = "device", skip_serializing_if = "Vec::is_empty")]
+    pub devices: Vec<DeviceRule>,
 }
 
 /// Editor state that changes all the time and is not meant to be versioned:
@@ -343,6 +388,7 @@ impl State {
         Config {
             nodes,
             links: self.links.clone(),
+            devices: self.devices.clone(),
         }
     }
 }
@@ -371,7 +417,15 @@ impl Ui {
     }
 }
 
+/// Link endpoint standing for whichever sink is the default one.
+pub const DEFAULT_SINK: &str = "@default-sink@";
+
 impl NodeMatcher {
+    /// Whether this is `"@default-sink@"`, which only link rules understand.
+    pub fn is_default_sink(&self) -> bool {
+        matches!(self, Self::Any(pattern) if String::from(pattern.clone()) == DEFAULT_SINK)
+    }
+
     /// Matches the nodes named exactly `name`.
     pub fn exact_name(name: &str) -> Self {
         Self::Fields(Box::new(NodeFields {
@@ -417,6 +471,11 @@ impl Settings {
     /// Links from the config, then the ones made by hand in the GUI.
     pub fn link_rules(&self) -> impl Iterator<Item = &LinkRule> {
         self.config.links.iter().chain(&self.state.links)
+    }
+
+    /// Virtual devices from the config, then the ones created in the GUI.
+    pub fn device_rules(&self) -> impl Iterator<Item = &DeviceRule> {
+        self.config.devices.iter().chain(&self.state.devices)
     }
 
     fn config_rules<'a>(&'a self, node: &'a Node) -> impl Iterator<Item = &'a NodeRule> {

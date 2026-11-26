@@ -5,7 +5,7 @@ use std::{
 
 use tuyau_core::{
     Graph, PortPair, Settings,
-    reconcile::{LinkPlan, initial_volume, plan_links},
+    reconcile::{DevicePlan, LinkPlan, initial_volume, plan_devices, plan_links},
 };
 
 use crate::{Command, CommandSender};
@@ -13,12 +13,22 @@ use crate::{Command, CommandSender};
 /// How long to wait before asking again for a change that has not shown up yet.
 const RETRY_AFTER: Duration = Duration::from_secs(5);
 
-/// Keeps the graph in line with the config: creates the declared links whenever
-/// their nodes appear (auto-reconnect) and applies volumes once per new node.
+/// What one reconcile pass asked for.
+#[derive(Debug, Default)]
+pub struct Plan {
+    pub links: LinkPlan,
+    pub devices: DevicePlan,
+}
+
+/// Keeps the graph in line with the config: creates the declared devices and
+/// links whenever they are missing (auto-reconnect) and applies volumes once per
+/// new node.
 #[derive(Default)]
 pub struct Reconciler {
     requested_links: HashMap<PortPair, Instant>,
     requested_unlinks: HashMap<u32, Instant>,
+    requested_devices: HashMap<String, Instant>,
+    requested_removals: HashMap<u32, Instant>,
     initialized_nodes: HashSet<u32>,
 }
 
@@ -33,13 +43,31 @@ impl Reconciler {
         graph: &Graph,
         settings: &Settings,
         commands: &CommandSender,
-    ) -> LinkPlan {
+    ) -> Plan {
         let now = Instant::now();
         let recent = |at: &Instant| now.duration_since(*at) < RETRY_AFTER;
         self.requested_links.retain(|_, at| recent(at));
         self.requested_unlinks.retain(|_, at| recent(at));
+        self.requested_devices.retain(|_, at| recent(at));
+        self.requested_removals.retain(|_, at| recent(at));
         self.initialized_nodes
             .retain(|id| graph.nodes.contains_key(id));
+
+        let mut devices = plan_devices(graph, settings);
+        devices
+            .create
+            .retain(|rule| !self.requested_devices.contains_key(&rule.name));
+        devices
+            .destroy
+            .retain(|id| !self.requested_removals.contains_key(id));
+        for rule in &devices.create {
+            self.requested_devices.insert(rule.name.clone(), now);
+            commands.send(Command::CreateDevice(rule.clone()));
+        }
+        for id in &devices.destroy {
+            self.requested_removals.insert(*id, now);
+            commands.send(Command::Destroy(*id));
+        }
 
         let mut plan = plan_links(graph, settings);
         plan.create
@@ -75,6 +103,9 @@ impl Reconciler {
                 });
             }
         }
-        plan
+        Plan {
+            links: plan,
+            devices,
+        }
     }
 }
