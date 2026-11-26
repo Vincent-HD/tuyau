@@ -217,6 +217,10 @@ nix/home-manager.nix    Home Manager module
 docs/                   the website, served as is by GitHub Pages
 ```
 
+## Releases
+
+Versions follow [SemVer](https://semver.org) and are cut by [release-please](https://github.com/googleapis/release-please) from [Conventional Commits](https://www.conventionalcommits.org): `fix:` bumps the patch, `feat:` the minor, `feat!:` or a `BREAKING CHANGE:` footer the major (the minor while below 1.0). Every push to `main` updates a release pull request with the next version and the `CHANGELOG.md`; merging it tags the version and publishes the GitHub release.
+
 ## License
 
 GPL-3.0-or-later. “tuyau” is French for pipe. Not affiliated with Crosspipe or PipeWire.
