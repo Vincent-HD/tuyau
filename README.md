@@ -11,7 +11,7 @@ Wire things by hand, and they stay wired.
 
 [Website](https://vincent-hd.github.io/tuyau/) · [Features](#features) · [Install](#install) · [Config](#config) · [tuyau vs Crosspipe](#tuyau-vs-crosspipe)
 
-<img src="site/assets/screenshots/editor.webp" alt="The tuyau graph editor: a microphone effects chain and apps wired into sinks, each source with its own wire color" width="100%">
+<img src="docs/assets/screenshots/editor.webp" alt="The tuyau graph editor: a microphone effects chain and apps wired into sinks, each source with its own wire color" width="100%">
 
 </div>
 
@@ -28,9 +28,9 @@ Wire things by hand, and they stay wired.
 
 <table>
   <tr>
-    <td width="33%"><img src="site/assets/screenshots/wire-menu.webp" alt="Right-click menu on a highlighted wire offering Disconnect"></td>
-    <td width="33%"><img src="site/assets/screenshots/properties.webp" alt="Properties panel listing the PipeWire properties of a device"></td>
-    <td width="33%"><img src="site/assets/screenshots/device-menu.webp" alt="A virtual sink with a menu offering Properties, Hide and Delete device"></td>
+    <td width="33%"><img src="docs/assets/screenshots/wire-menu.webp" alt="Right-click menu on a highlighted wire offering Disconnect"></td>
+    <td width="33%"><img src="docs/assets/screenshots/properties.webp" alt="Properties panel listing the PipeWire properties of a device"></td>
+    <td width="33%"><img src="docs/assets/screenshots/device-menu.webp" alt="A virtual sink with a menu offering Properties, Hide and Delete device"></td>
   </tr>
   <tr>
     <td><b>Right-click a wire</b> to light it up and disconnect it, even when it runs under a card.</td>
@@ -39,7 +39,7 @@ Wire things by hand, and they stay wired.
   </tr>
 </table>
 
-<img src="site/assets/screenshots/overview.webp" alt="The whole graph zoomed out with Fit: a long microphone chain on top, groups of apps packed side by side below" width="100%">
+<img src="docs/assets/screenshots/overview.webp" alt="The whole graph zoomed out with Fit: a long microphone chain on top, groups of apps packed side by side below" width="100%">
 
 ## Install
 
@@ -213,7 +213,7 @@ crates/tuyau-pipewire   PipeWire thread: graph snapshots out, commands in; the r
 crates/tuyau-gui        GPUI-CE graph editor
 crates/tuyau            the binary: CLI, and the GUI when run without a subcommand
 nix/home-manager.nix    Home Manager module
-site/                   the website, deployed to GitHub Pages
+docs/                   the website, served as is by GitHub Pages
 ```
 
 ## License
