@@ -1,6 +1,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     sync::Arc,
+    time::{Duration, Instant},
 };
 
 use gpui::{
@@ -23,7 +24,7 @@ use crate::{
         self, HANDLE_SIZE, HEADER_HEIGHT, MUTE_WIDTH, PADDING, PERCENT_WIDTH, PORT_ROW_HEIGHT,
         SLIDER_GAP, SUBTITLE_HEIGHT, VOLUME_HEIGHT,
     },
-    history::{Edit, History, Layout},
+    history::{Edit, History, Layout, Moved},
     theme::{self, Theme},
 };
 
@@ -45,14 +46,26 @@ const INSPECTOR_WIDTH: f32 = 420.0;
 const INSPECTOR_HEIGHT: f32 = 460.0;
 const INSPECTOR_KEY_WIDTH: f32 = 170.0;
 
+/// While the graph scrolls, sliders passing under the pointer leave the wheel to
+/// it; only a scroll that starts over a slider changes the volume.
+const SCROLL_LATCH: Duration = Duration::from_millis(400);
+
 enum Drag {
+    /// One card, or every selected card when the grabbed one is selected.
     Node {
-        node_id: u32,
+        /// Where the pointer was pressed, in world coordinates.
         grab: Position,
-        start: Position,
+        starts: BTreeMap<u32, Position>,
     },
     Pan {
         last: Point<Pixels>,
+        moved: bool,
+    },
+    /// A rubber band, in world coordinates; it adds to the selection it started with.
+    Select {
+        from: Position,
+        to: Position,
+        base: BTreeSet<u32>,
     },
     Wire {
         from_port: u32,
@@ -117,6 +130,8 @@ pub struct Patchbay {
     /// No view was saved yet: show the whole graph once it is laid out.
     fit_pending: bool,
     drag: Option<Drag>,
+    selection: BTreeSet<u32>,
+    last_graph_scroll: Option<Instant>,
     rename: Option<Rename>,
     media_filter: BTreeSet<MediaKind>,
     status: Option<String>,
@@ -187,6 +202,8 @@ impl Patchbay {
             zoom: view.zoom.clamp(MIN_ZOOM, MAX_ZOOM),
             fit_pending,
             drag: None,
+            selection: BTreeSet::new(),
+            last_graph_scroll: None,
             rename: None,
             media_filter: [
                 MediaKind::Audio,
@@ -562,18 +579,23 @@ impl Patchbay {
                     });
                 }
             }
-            Edit::Move { name, after, .. } => {
-                let ids: Vec<u32> = self
-                    .graph
-                    .nodes
-                    .values()
-                    .filter(|node| &node.name == name)
-                    .map(|node| node.id)
-                    .collect();
-                for id in ids {
-                    self.positions.insert(id, *after);
+            Edit::Move(moves) => {
+                for moved in moves {
+                    let ids: Vec<u32> = self
+                        .graph
+                        .nodes
+                        .values()
+                        .filter(|node| node.name == moved.name)
+                        .map(|node| node.id)
+                        .collect();
+                    for id in ids {
+                        self.positions.insert(id, moved.after);
+                    }
+                    self.settings
+                        .ui
+                        .positions
+                        .insert(moved.name.clone(), moved.after);
                 }
-                self.settings.ui.positions.insert(name.clone(), *after);
                 self.save_ui();
             }
             Edit::Alias { name, after, .. } => {
@@ -692,18 +714,30 @@ impl Patchbay {
         let pointer = self.to_world(event.position);
         match &mut self.drag {
             None => return,
-            Some(Drag::Node { node_id, grab, .. }) => {
-                self.positions.insert(
-                    *node_id,
-                    Position {
-                        x: pointer.x - grab.x,
-                        y: pointer.y - grab.y,
-                    },
-                );
+            Some(Drag::Node { grab, starts }) => {
+                let (dx, dy) = (pointer.x - grab.x, pointer.y - grab.y);
+                for (id, start) in starts.iter() {
+                    self.positions.insert(
+                        *id,
+                        Position {
+                            x: start.x + dx,
+                            y: start.y + dy,
+                        },
+                    );
+                }
             }
-            Some(Drag::Pan { last }) => {
-                self.pan += event.position - *last;
+            Some(Drag::Pan { last, moved }) => {
+                let delta = event.position - *last;
+                *moved |= delta != Point::default();
+                self.pan += delta;
                 *last = event.position;
+            }
+            Some(Drag::Select { from, to, base }) => {
+                *to = pointer;
+                let (from, to) = (*from, *to);
+                let mut selection = base.clone();
+                selection.extend(self.nodes_in(from, to));
+                self.selection = selection;
             }
             Some(Drag::Wire {
                 pointer: wire_end, ..
@@ -719,21 +753,53 @@ impl Patchbay {
     }
 
     fn end_drag(&mut self) {
-        let Some(Drag::Node { node_id, start, .. }) = self.drag.take() else {
-            return;
-        };
-        let (Some(node), Some(position)) =
-            (self.graph.nodes.get(&node_id), self.positions.get(&node_id))
-        else {
-            return;
-        };
-        if *position != start {
-            self.edit(Edit::Move {
-                name: node.name.clone(),
-                before: start,
-                after: *position,
-            });
+        match self.drag.take() {
+            Some(Drag::Node { starts, .. }) => {
+                let mut moves: Vec<Moved> = Vec::new();
+                for (id, start) in starts {
+                    let (Some(node), Some(position)) =
+                        (self.graph.nodes.get(&id), self.positions.get(&id))
+                    else {
+                        continue;
+                    };
+                    // Nodes sharing a name share a position: record it once.
+                    if *position != start && moves.iter().all(|moved| moved.name != node.name) {
+                        moves.push(Moved {
+                            name: node.name.clone(),
+                            before: start,
+                            after: *position,
+                        });
+                    }
+                }
+                if !moves.is_empty() {
+                    self.edit(Edit::Move(moves));
+                }
+            }
+            // A click on the background, not a pan, clears the selection.
+            Some(Drag::Pan { moved: false, .. }) => self.selection.clear(),
+            _ => {}
         }
+    }
+
+    /// The visible nodes whose card touches the rectangle between two world points.
+    fn nodes_in(&self, from: Position, to: Position) -> Vec<u32> {
+        let (left, right) = (from.x.min(to.x), from.x.max(to.x));
+        let (top, bottom) = (from.y.min(to.y), from.y.max(to.y));
+        self.graph
+            .nodes
+            .values()
+            .filter(|node| self.visible(node))
+            .filter(|node| {
+                self.positions.get(&node.id).is_some_and(|position| {
+                    let height = geometry::node_height(&self.graph, node);
+                    position.x <= right
+                        && position.x + NODE_WIDTH >= left
+                        && position.y <= bottom
+                        && position.y + height >= top
+                })
+            })
+            .map(|node| node.id)
+            .collect()
     }
 
     fn start_rename(&mut self, node_id: u32, window: &mut Window, cx: &mut Context<Self>) {
@@ -768,9 +834,22 @@ impl Patchbay {
 
     fn on_key_down(&mut self, event: &KeyDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
         let Some(rename) = &mut self.rename else {
-            if event.keystroke.key == "escape"
-                && (self.menu.take().is_some() || self.inspected.take().is_some())
+            let key = event.keystroke.key.as_str();
+            if key == "escape"
+                && (self.menu.take().is_some()
+                    || self.inspected.take().is_some()
+                    || !std::mem::take(&mut self.selection).is_empty())
             {
+                cx.notify();
+            }
+            if key == "a" && event.keystroke.modifiers.control {
+                self.selection = self
+                    .graph
+                    .nodes
+                    .values()
+                    .filter(|node| self.visible(node) && self.positions.contains_key(&node.id))
+                    .map(|node| node.id)
+                    .collect();
                 cx.notify();
             }
             return;
@@ -1227,7 +1306,7 @@ impl Patchbay {
                         this.drag = None;
                         this.start_rename(node_id, window, cx);
                     } else {
-                        this.start_node_drag(node_id, event.position);
+                        this.start_node_drag(node_id, event.position, event.modifiers.shift);
                     }
                     cx.notify();
                 }),
@@ -1259,7 +1338,7 @@ impl Patchbay {
                 MouseButton::Left,
                 cx.listener(move |this, event: &MouseDownEvent, _, cx| {
                     cx.stop_propagation();
-                    this.start_node_drag(node_id, event.position);
+                    this.start_node_drag(node_id, event.position, event.modifiers.shift);
                     cx.notify();
                 }),
             )
@@ -1294,6 +1373,21 @@ impl Patchbay {
                     .border_1()
                     .border_color(theme.border),
             )
+            // The selection ring sits just outside the card: inside, the header's
+            // background would cover it.
+            .when(self.selection.contains(&node_id), |card| {
+                card.child(
+                    div()
+                        .absolute()
+                        .top(px(-3.0))
+                        .bottom(px(-3.0))
+                        .left(px(-3.0))
+                        .right(px(-3.0))
+                        .rounded(px(9.0))
+                        .border_2()
+                        .border_color(theme.accent),
+                )
+            })
             .child(header)
             .when_some(node.media_detail(), |card, detail| {
                 card.child(
@@ -1601,18 +1695,49 @@ impl Patchbay {
         )
     }
 
-    fn start_node_drag(&mut self, node_id: u32, pointer: Point<Pixels>) {
-        let Some(position) = self.positions.get(&node_id) else {
-            return;
+    fn render_band(&self, theme: &Theme) -> Option<AnyElement> {
+        let Some(Drag::Select { from, to, .. }) = &self.drag else {
+            return None;
         };
-        let pointer = self.to_world(pointer);
+        let (a, b) = (self.to_screen(*from), self.to_screen(*to));
+        let mut fill = theme.accent;
+        fill.alpha = 0.12;
+        Some(
+            div()
+                .absolute()
+                .left(a.x.min(b.x))
+                .top(a.y.min(b.y))
+                .w((a.x - b.x).abs())
+                .h((a.y - b.y).abs())
+                .bg(fill)
+                .border_1()
+                .border_color(theme.accent)
+                .into_any_element(),
+        )
+    }
+
+    /// Shift-click adds or removes a card from the selection; dragging a selected
+    /// card moves the whole selection.
+    fn start_node_drag(&mut self, node_id: u32, pointer: Point<Pixels>, shift: bool) {
+        if shift {
+            if !self.selection.remove(&node_id) {
+                self.selection.insert(node_id);
+            }
+        } else if !self.selection.contains(&node_id) {
+            self.selection.clear();
+        }
+        let moving = if self.selection.contains(&node_id) {
+            self.selection.clone()
+        } else {
+            BTreeSet::from([node_id])
+        };
+        let starts = moving
+            .into_iter()
+            .filter_map(|id| Some((id, *self.positions.get(&id)?)))
+            .collect();
         self.drag = Some(Drag::Node {
-            node_id,
-            grab: Position {
-                x: pointer.x - position.x,
-                y: pointer.y - position.y,
-            },
-            start: *position,
+            grab: self.to_world(pointer),
+            starts,
         });
     }
 
@@ -1709,8 +1834,12 @@ impl Patchbay {
                         }),
                     )
                     .on_scroll_wheel(cx.listener(move |this, event: &ScrollWheelEvent, _, cx| {
-                        // Ctrl-scroll zooms the graph, even over a slider.
-                        if event.modifiers.control {
+                        // Ctrl-scroll zooms the graph, even over a slider, and a
+                        // scroll already moving the graph keeps moving it.
+                        let scrolling_graph = this
+                            .last_graph_scroll
+                            .is_some_and(|last| last.elapsed() < SCROLL_LATCH);
+                        if event.modifiers.control || scrolling_graph {
                             return;
                         }
                         cx.stop_propagation();
@@ -1859,6 +1988,7 @@ impl Render for Patchbay {
         let handles = self.render_wire_handles(&theme, cx);
         let inspector = self.render_inspector(&theme, cx);
         let menu = self.render_menu(&theme, cx);
+        let band = self.render_band(&theme);
         let empty = self.graph.nodes.is_empty();
 
         div()
@@ -1897,8 +2027,18 @@ impl Render for Patchbay {
                             if this.rename.is_some() {
                                 this.commit_rename();
                             }
-                            this.drag = Some(Drag::Pan {
-                                last: event.position,
+                            this.drag = Some(if event.modifiers.shift {
+                                let from = this.to_world(event.position);
+                                Drag::Select {
+                                    from,
+                                    to: from,
+                                    base: this.selection.clone(),
+                                }
+                            } else {
+                                Drag::Pan {
+                                    last: event.position,
+                                    moved: false,
+                                }
                             });
                             cx.notify();
                         }),
@@ -1928,12 +2068,14 @@ impl Render for Patchbay {
                             this.zoom_at(this.zoom * factor, event.position);
                         } else {
                             this.pan += delta;
+                            this.last_graph_scroll = Some(Instant::now());
                         }
                         cx.notify();
                     }))
                     .child(self.render_wires(&theme))
                     .children(handles)
                     .children(nodes)
+                    .children(band)
                     .children(inspector)
                     .children(menu)
                     .when(empty, |graph| {

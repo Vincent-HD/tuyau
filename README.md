@@ -81,10 +81,11 @@ Or from a checkout: `nix develop`, then `cargo run --release`.
 | Link a port to a node | Drag a port onto a card; the matching channel is picked |
 | Remove a link | Right-click the wire → *Disconnect*, click the dot in the middle of the wire, or drag between the same ports again |
 | Move a node | Drag its card |
+| Select several | <kbd>Shift</kbd> + drag the background, <kbd>Shift</kbd> + click cards, <kbd>Ctrl</kbd>+<kbd>A</kbd>; drag one to move them all, <kbd>Esc</kbd> or a click on the background clears |
 | Pan | Drag the background, or scroll |
 | Zoom | <kbd>Ctrl</kbd> + scroll; *Fit* shows everything, the percentage button resets to 100% |
 | Rename | Double-click the title, type, <kbd>Enter</kbd> (empty name resets) |
-| Volume | Drag or scroll the slider; **M** toggles mute |
+| Volume | Drag the slider, or start scrolling over it (a scroll that pans the graph passes over sliders); **M** toggles mute |
 | Undo / redo | <kbd>Ctrl</kbd>+<kbd>Z</kbd> / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd> or <kbd>Ctrl</kbd>+<kbd>Y</kbd> |
 | Virtual device | *New device* creates a virtual sink; right-click its card → *Delete device* |
 | Node menu | Right-click a card: properties, hide, delete (devices made in the GUI) |
@@ -193,7 +194,7 @@ tuyau started as a rewrite of [Crosspipe](https://github.com/dp0sk/Crosspipe), a
 | Virtual devices | ✅ | ❌ |
 | Node properties | ✅ | ❌ |
 | Wire colors | Per source and channel | Per media type |
-| Rubber-band multi-select | ❌ | ✅ |
+| Rubber-band multi-select | ✅ | ✅ |
 | Packaging | Nix flake | Flathub and distro packages |
 | Stack | Rust, [GPUI-CE](https://github.com/gpui-ce/gpui-ce) | Vala, GTK4 |
 

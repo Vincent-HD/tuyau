@@ -25,11 +25,8 @@ pub enum Edit {
         node_id: u32,
         mute: bool,
     },
-    Move {
-        name: String,
-        before: Position,
-        after: Position,
-    },
+    /// Cards moved together, keyed by node name.
+    Move(Vec<Moved>),
     Alias {
         name: String,
         before: Option<String>,
@@ -48,6 +45,13 @@ pub enum Edit {
         rule: DeviceRule,
         present: bool,
     },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Moved {
+    pub name: String,
+    pub before: Position,
+    pub after: Position,
 }
 
 /// Every node position: the saved ones, keyed by node name, and the shown ones.
@@ -76,15 +80,16 @@ impl Edit {
                 node_id,
                 mute: !mute,
             },
-            Self::Move {
-                name,
-                before,
-                after,
-            } => Self::Move {
-                name,
-                before: after,
-                after: before,
-            },
+            Self::Move(moves) => Self::Move(
+                moves
+                    .into_iter()
+                    .map(|moved| Moved {
+                        before: moved.after,
+                        after: moved.before,
+                        ..moved
+                    })
+                    .collect(),
+            ),
             Self::Alias {
                 name,
                 before,
@@ -192,6 +197,28 @@ mod tests {
         assert_eq!(history.undo(), None);
         assert_eq!(history.redo(), Some(Edit::Link(pair)));
         assert_eq!(history.redo(), None);
+    }
+
+    #[test]
+    fn a_group_move_undoes_in_one_step() {
+        let moved = |name: &str, before: f32, after: f32| Moved {
+            name: name.to_owned(),
+            before: Position { x: before, y: 0.0 },
+            after: Position { x: after, y: 0.0 },
+        };
+        let mut history = History::default();
+        history.record(Edit::Move(vec![
+            moved("a", 0.0, 10.0),
+            moved("b", 5.0, 15.0),
+        ]));
+        assert_eq!(
+            history.undo(),
+            Some(Edit::Move(vec![
+                moved("a", 10.0, 0.0),
+                moved("b", 15.0, 5.0)
+            ]))
+        );
+        assert_eq!(history.undo(), None);
     }
 
     #[test]
