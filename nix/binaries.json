@@ -1,0 +1,11 @@
+{
+  "version": "0.1.0",
+  "x86_64-linux": {
+    "url": "https://github.com/Vincent-HD/tuyau/releases/download/v0.1.0/tuyau-0.1.0-x86_64-linux.tar.gz",
+    "hash": "sha256-cnmLItRAt+//naAuq5VWTK2fyKUqiJktpqcOSCvrmwM="
+  },
+  "aarch64-linux": {
+    "url": "https://github.com/Vincent-HD/tuyau/releases/download/v0.1.0/tuyau-0.1.0-aarch64-linux.tar.gz",
+    "hash": "sha256-xDNt0iEiwwyn+tZ4hmHhIzpLYgmbs5BxncrGPukR0NA="
+  }
+}
