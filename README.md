@@ -50,6 +50,18 @@ nix run github:Vincent-HD/tuyau -- ls      # CLI
 
 Or from a checkout: `nix develop`, then `cargo run --release`.
 
+### Prebuilt binaries
+
+Every [release](https://github.com/Vincent-HD/tuyau/releases) has archives for x86_64 and aarch64 Linux: the `tuyau` binary, its desktop entry and its icon. It needs PipeWire, fontconfig, libxkbcommon and libxcb at runtime, which any desktop already has.
+
+With Nix, `tuyau-bin` installs that release binary instead of compiling tuyau:
+
+```sh
+nix run github:Vincent-HD/tuyau#tuyau-bin
+```
+
+In Home Manager, set `programs.tuyau.package = inputs.tuyau.packages.${pkgs.system}.tuyau-bin;`.
+
 The package ships a desktop entry and its icon (`share/applications/tuyau.desktop`, `share/icons/hicolor/scalable/apps/tuyau.svg`), so installing it through Home Manager or NixOS puts tuyau in app launchers. The window's Wayland `app_id` is `tuyau`, which docks and task switchers match to that entry.
 
 ### Home Manager
