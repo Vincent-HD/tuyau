@@ -60,6 +60,10 @@
           };
           nativeBuildInputs = nativeBuildInputs pkgs;
           buildInputs = buildInputs pkgs;
+          postInstall = ''
+            install -Dm644 assets/tuyau.desktop $out/share/applications/tuyau.desktop
+            install -Dm644 assets/icon.svg $out/share/icons/hicolor/scalable/apps/tuyau.svg
+          '';
           postFixup = ''
             wrapProgram $out/bin/tuyau \
               --prefix LD_LIBRARY_PATH : ${pkgs.lib.makeLibraryPath (runtimeLibraries pkgs)}

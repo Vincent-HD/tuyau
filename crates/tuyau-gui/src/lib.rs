@@ -7,7 +7,10 @@ mod theme;
 
 use std::path::PathBuf;
 
-use gpui::{App, AppContext, Bounds, KeyBinding, WindowBounds, WindowOptions, actions, px, size};
+use gpui::{
+    App, AppContext, Bounds, KeyBinding, TitlebarOptions, WindowBounds, WindowOptions, actions, px,
+    size,
+};
 use tuyau_pipewire::Connection;
 
 use crate::patchbay::Patchbay;
@@ -40,7 +43,13 @@ pub fn run(options: Options) -> anyhow::Result<()> {
         let opened = cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
-                app_id: Some("io.github.tuyau".into()),
+                // Must match assets/tuyau.desktop, or launchers and docks show a
+                // generic icon for the window.
+                app_id: Some("tuyau".into()),
+                titlebar: Some(TitlebarOptions {
+                    title: Some("tuyau".into()),
+                    ..TitlebarOptions::default()
+                }),
                 ..WindowOptions::default()
             },
             |window, cx| {

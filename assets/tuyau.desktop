@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=tuyau
+GenericName=PipeWire Patchbay
+Comment=Wire PipeWire nodes in a graph editor
+Exec=tuyau
+Icon=tuyau
+Terminal=false
+Categories=AudioVideo;Audio;Mixer;
+Keywords=pipewire;patchbay;audio;routing;jack;
+StartupWMClass=tuyau

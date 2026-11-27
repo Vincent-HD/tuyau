@@ -50,6 +50,8 @@ nix run github:Vincent-HD/tuyau -- ls      # CLI
 
 Or from a checkout: `nix develop`, then `cargo run --release`.
 
+The package ships a desktop entry and its icon (`share/applications/tuyau.desktop`, `share/icons/hicolor/scalable/apps/tuyau.svg`), so installing it through Home Manager or NixOS puts tuyau in app launchers. The window's Wayland `app_id` is `tuyau`, which docks and task switchers match to that entry.
+
 ### Home Manager
 
 ```nix
